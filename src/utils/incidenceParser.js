@@ -1,10 +1,15 @@
 import * as pdfjsLib from 'pdfjs-dist';
-import Tesseract from 'tesseract.js'; // IMPORTANTE: Librería OCR
+import Tesseract from 'tesseract.js';
 
-// Configuración del Worker de PDF para Vite (Local)
-import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+// --- SOLUCIÓN DEFINITIVA (BLOB WORKER) ---
+// Importamos el código fuente del worker como texto plano (?raw).
+// Esto evita errores de "Failed to fetch" o CORS en entornos como WebContainer.
+import workerScript from 'pdfjs-dist/build/pdf.worker.min.mjs?raw';
 
+// Configuración del Worker usando un Blob URL local
 if (typeof window !== 'undefined' && 'Worker' in window) {
+  const blob = new Blob([workerScript], { type: 'application/javascript' });
+  const workerUrl = URL.createObjectURL(blob);
   pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 }
 
@@ -47,6 +52,8 @@ const performOCR = async (pdf, pageNum) => {
 export const parseIncidencePDF = async (file) => {
   try {
     const arrayBuffer = await file.arrayBuffer();
+    
+    // Carga del documento
     const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
     const pdf = await loadingTask.promise;
     
@@ -76,11 +83,10 @@ export const parseIncidencePDF = async (file) => {
       }
     }
 
-    // --- PROCESAMIENTO DE TEXTO (Igual que antes) ---
-    // Limpieza agresiva de caracteres basura del OCR
+    // --- PROCESAMIENTO DE TEXTO ---
     const cleanText = fullText
       .replace(/\s+/g, ' ') // Espacios dobles
-      .replace(/[|«»_—]/g, '') // Caracteres comunes de error OCR
+      .replace(/[|«»_—]/g, '') // Caracteres basura comunes de OCR
       .trim();
 
     console.log("--- TEXTO FINAL (OCR: " + usedOCR + ") ---", cleanText.substring(0, 500));
@@ -177,6 +183,7 @@ export const analyzeDiscrepancy = (pdfData, depositLogs, errorLogs) => {
       const targetDate = ts.dateObj;
       const matchingError = errorLogs.find(log => {
           const logDate = new Date(log.timestamp);
+          // Comparamos solo día, mes y año para ser flexibles
           return logDate.getDate() === targetDate.getDate() &&
                  logDate.getMonth() === targetDate.getMonth() &&
                  logDate.getFullYear() === targetDate.getFullYear();
@@ -185,7 +192,7 @@ export const analyzeDiscrepancy = (pdfData, depositLogs, errorLogs) => {
       if (matchingError) {
           analysis.isMatchFound = true;
           analysis.matchedLog = matchingError;
-          analysis.technicalConclusion = `COINCIDENCIA CONFIRMADA (Vía OCR): El acta escaneada fecha el incidente el ${targetDate.toLocaleDateString()}. Se encontró el error "${matchingError.name}" registrado ese día.`;
+          analysis.technicalConclusion = `COINCIDENCIA CONFIRMADA (Vía OCR): El acta fecha el incidente el ${targetDate.toLocaleDateString()}. Se encontró el error "${matchingError.name}" registrado ese día.`;
           return analysis;
       }
   }
