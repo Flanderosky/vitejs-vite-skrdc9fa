@@ -12,10 +12,12 @@
   "dependencies": {
     "html2pdf.js": "^0.14.0",
     "lucide-react": "^0.562.0",
+    "pdfjs-dist": "^5.4.530",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-to-print": "^3.2.0",
-    "recharts": "^3.6.0"
+    "recharts": "^3.6.0",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",
