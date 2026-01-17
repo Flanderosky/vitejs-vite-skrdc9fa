@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Clipboard, Download, FileText, CheckCircle, XCircle, Eye, EyeOff, AlertTriangle, Search, Plus, Trash2, Wrench, Settings } from 'lucide-react';
+import { Clipboard, Download, FileText, CheckCircle, Trash2, Plus, Wrench, Activity, DollarSign, AlertTriangle, Terminal, XCircle, Calendar, Hash } from 'lucide-react';
 import html2pdf from 'html2pdf.js';
 import PrintableReport from './PrintableReport.jsx';
-import { parseIncidencePDF, analyzeDiscrepancy } from '../../utils/incidenceParser';
+import { parseIncidencePDF } from '../../utils/incidenceParser';
 
 export default function DictumView({
   stats,
@@ -15,65 +15,46 @@ export default function DictumView({
   amounts,
   successPercentage,
 }) {
-  // Estado para formulario principal
+  // ----------------------------------------------------------------------
+  // 1. ESTADO Y LÓGICA ORIGINAL
+  // ----------------------------------------------------------------------
+
   const [dictumData, setDictumData] = useState({
-    cliente: '',
-    equipo: 'DE-100',
-    serie: '',
-    etv: '',
-    direccion: '',
-    tecnico: '',
-    conclusiones: '',
+    cliente: '', equipo: 'DE-100', serie: '', etv: '', direccion: '', tecnico: '', conclusiones: '',
   });
 
   const [isGenerating, setIsGenerating] = useState(false);
-  const [isReadingPdf, setIsReadingPdf] = useState(false);
-  const [showDebug, setShowDebug] = useState(false);
   
-  // --- NUEVO: ESTADO PARA MANTENIMIENTO Y REFACCIONES ---
+  // Estado para mantenimiento
   const [maintenance, setMaintenance] = useState({
-    requiresRollers: false,   // Cambio de Rodillos
-    requiresServices: false,  // Servicios adicionales
-    serviceCount: 2,          // Por defecto 2 servicios como te pidieron
-    reason: 'Alta Carga de Trabajo y Desgaste Operativo' // Justificación default
+    requiresRollers: false, requiresServices: false, serviceCount: 2, reason: 'Alta Carga de Trabajo y Desgaste Operativo'
   });
 
-  // Lista de incidencias (Carrito de Aclaraciones)
   const [incidencesList, setIncidencesList] = useState([]);
 
-  // Formulario manual de incidencias
+  // Formulario manual (RECUPERADO CAMPO FECHA)
   const [manualData, setManualData] = useState({
-    folio: '',
-    diffAmount: '',
-    collectAmount: '',
-    date: '',
-    hasPdf: false,
-    rawText: ''
+    folio: '', diffAmount: '', collectAmount: '', date: '', hasPdf: false, rawText: ''
   });
 
   const [validationResult, setValidationResult] = useState(null);
 
-  // 1. GENERADOR DE CONCLUSIONES
+  // --- GENERACIÓN DE TEXTO ---
   useEffect(() => {
     generateConclusions();
   }, [processedLogs, unverifiedLogs, collectLogs, depositLogs, incidencesList]); 
 
   const generateConclusions = () => {
-    if (processedLogs.length === 0 && unverifiedLogs.length === 0 && collectLogs.length === 0 && incidencesList.length === 0) {
-       if (!dictumData.conclusiones) setDictumData(prev => ({ ...prev, conclusiones: 'No hay datos suficientes.' }));
-       return;
-    }
+    if (processedLogs.length === 0 && unverifiedLogs.length === 0 && collectLogs.length === 0 && incidencesList.length === 0) return;
 
     const categories = [...categoryData].sort((a, b) => b.value - a.value);
     const mainCategory = categories[0]?.name || 'General';
 
     let text = `DICTAMEN TÉCNICO Y DE FIABILIDAD OPERATIVA:\n\n`;
     text += `Se ha realizado un análisis integral de ${stats.totalFiles} archivos. Tasa de Éxito: ${successPercentage}%.\n\n`;
-
     text += processedLogs.length > 0 
       ? `ESTADO TÉCNICO: Se registraron ${stats.totalErrors} alertas. Categoría principal: ${mainCategory}.\n`
       : `ESTADO TÉCNICO: Equipo sin historial reciente de errores críticos.\n`;
-
     text += `BALANCE DE EFECTIVO:\n`;
     text += `- Ingresado: $${amounts.deposited.toLocaleString()} MXN\n`;
     text += `- Riesgo (Unverified): $${amounts.unverified.toLocaleString()} MXN.\n\n`;
@@ -87,13 +68,13 @@ export default function DictumView({
         text += `- Total Justificado: $${totalJustified.toLocaleString()} MXN\n`;
         text += `- Diferencia: $${(totalClaimed - totalJustified).toLocaleString()} MXN\n`;
     }
-
     setDictumData(prev => ({ ...prev, conclusiones: text }));
   };
 
-  // 2. LOGICA DE VALIDACIÓN (Igual que antes)
+  // --- VALIDACIÓN CRUZADA (LÓGICA ORIGINAL) ---
   useEffect(() => {
-    if (!manualData.date && !manualData.diffAmount && !manualData.collectAmount) {
+    // Solo validamos si hay fecha O monto (cualquiera de los dos sirve para buscar pistas)
+    if (!manualData.date && !manualData.diffAmount) {
         setValidationResult(null); return;
     }
     runCrossValidation();
@@ -102,44 +83,53 @@ export default function DictumView({
   const runCrossValidation = () => {
     const targetDate = manualData.date ? new Date(manualData.date) : null;
     const diffVal = parseFloat(manualData.diffAmount) || 0;
-    const collectVal = parseFloat(manualData.collectAmount) || 0;
+    
     let findings = [];
     let isJustified = false;
     let shortConclusion = "";
 
+    // 1. Buscar por MONTO en UNVERIFIED (Prioridad Alta)
     if (diffVal > 0) {
-        const unverifiedMatch = unverifiedLogs.find(l => Math.abs(l.amount - diffVal) < 2);
+        const unverifiedMatch = unverifiedLogs.find(l => Math.abs(l.amount - diffVal) < 2); // Tolerancia $2
         if (unverifiedMatch) {
             isJustified = true;
-            findings.push(`✅ DIFERENCIA JUSTIFICADA: Coincide con depósito "UNVERIFIED" del ${unverifiedMatch.timestamp}.`);
+            findings.push(`✅ DIFERENCIA JUSTIFICADA: Coincide con depósito "UNVERIFIED" de $${unverifiedMatch.amount} el ${unverifiedMatch.timestamp}.`);
             shortConclusion = "Coincide con Unverified";
-        } else {
-             if (targetDate) {
-                 const errorMatch = processedLogs.find(l => {
-                     const lDate = new Date(l.timestamp);
-                     return Math.abs(lDate - targetDate) < 3600000;
-                 });
-                 if (errorMatch) {
-                     isJustified = true;
-                     findings.push(`⚠️ JUSTIFICADO POR ERROR TÉCNICO: Falla "${errorMatch.name}" registrada a la hora del incidente.`);
-                     shortConclusion = `Falla técnica (${errorMatch.name})`;
-                 } else {
-                     findings.push(`❌ SIN EVIDENCIA TÉCNICA: No hay errores ni depósitos en esa fecha.`);
-                     shortConclusion = "Sin evidencia en logs";
-                 }
-             }
         }
-    } else if (collectVal > 0) {
-         const collectMatch = collectLogs.find(l => Math.abs(l.amount - collectVal) < 1);
-         if(collectMatch) {
-             findings.push(`✅ RECOLECCIÓN ENCONTRADA: ${collectMatch.timestamp}`);
-             isJustified = true;
-             shortConclusion = "Recolección Conciliada";
-         } else {
-             findings.push(`⚠️ RECOLECCIÓN NO ENCONTRADA`);
-             shortConclusion = "Faltante de Recolección";
-         }
     }
+
+    // 2. Si no se justificó por monto, intentar justificar por FECHA (Error Técnico)
+    if (!isJustified && targetDate) {
+         // Buscamos errores +/- 1 hora de la fecha reportada
+         const errorMatch = processedLogs.find(l => {
+             const lDate = new Date(l.timestamp);
+             return Math.abs(lDate - targetDate) < 3600000; // 1 hora ventana
+         });
+
+         if (errorMatch) {
+             isJustified = true;
+             findings.push(`⚠️ JUSTIFICADO POR ERROR TÉCNICO: Falla "${errorMatch.name}" registrada cercana a la hora del incidente.`);
+             shortConclusion = `Falla técnica (${errorMatch.name})`;
+         } else {
+             // Si tampoco hay error, buscamos si hubo actividad (depósitos) cerca de esa hora aunque el monto no coincida
+             const activityMatch = depositLogs.find(l => {
+                const lDate = new Date(l.timestamp);
+                return Math.abs(lDate - targetDate) < 1800000; // 30 min ventana
+             });
+             
+             if (activityMatch) {
+                findings.push(`ℹ️ ACTIVIDAD ENCONTRADA: Hubo depósitos exitosos cerca de esta hora (${activityMatch.timestamp}), pero el monto no coincide.`);
+                shortConclusion = "Actividad sin coincidencia de monto";
+             } else {
+                findings.push(`❌ SIN EVIDENCIA: No hay errores ni actividad registrada en la fecha/hora indicada.`);
+                shortConclusion = "Sin evidencia en logs";
+             }
+         }
+    } else if (!isJustified && !targetDate && diffVal > 0) {
+        findings.push(`❌ SIN EVIDENCIA: El monto no está en "Unverified". (Intenta agregar la Fecha exacta para buscar errores técnicos).`);
+        shortConclusion = "No encontrado por Monto";
+    }
+
     setValidationResult({ isJustified, findings, conclusionText: findings.join('\n'), shortConclusion: shortConclusion || "Pendiente" });
   };
 
@@ -155,7 +145,8 @@ export default function DictumView({
         shortConclusion: validationResult?.shortConclusion || "N/A",
     };
     setIncidencesList([...incidencesList, newIncidence]);
-    setManualData({ folio: '', diffAmount: '', collectAmount: '', date: '', hasPdf: false, rawText: '' });
+    // Limpiamos form pero mantenemos fecha por comodidad
+    setManualData({ ...manualData, folio: '', diffAmount: '', hasPdf: false, rawText: '' });
     setValidationResult(null);
   };
 
@@ -164,7 +155,6 @@ export default function DictumView({
   const handleIncidenceUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setIsReadingPdf(true);
     try {
       const pdfData = await parseIncidencePDF(file);
       let bestDate = '';
@@ -175,6 +165,7 @@ export default function DictumView({
       }
       const moneyMatch = pdfData.debugText.match(/\$\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)/);
       const extractedAmount = moneyMatch ? moneyMatch[1].replace(/,/g, '') : '';
+      
       setManualData({
           folio: pdfData.folio !== 'S/N' ? pdfData.folio : '',
           diffAmount: extractedAmount,
@@ -186,7 +177,6 @@ export default function DictumView({
     } catch (error) {
       alert(`Error lectura: ${error.message}`);
     } finally {
-      setIsReadingPdf(false);
       e.target.value = null;
     }
   };
@@ -195,149 +185,239 @@ export default function DictumView({
     setIsGenerating(true);
     const element = document.getElementById('printable-report-content');
     const fileName = `Dictamen_${dictumData.etv || 'General'}.pdf`;
-    const opt = { margin: [0.5, 0.5], filename: fileName, image: { type: 'jpeg', quality: 0.98 }, html2canvas: { scale: 2, useCORS: true }, jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } };
+    const opt = { 
+        margin: [0.3, 0.3], 
+        filename: fileName, 
+        image: { type: 'jpeg', quality: 0.98 }, 
+        html2canvas: { scale: 2, useCORS: true, logging: false }, 
+        jsPDF: { unit: 'in', format: 'letter', orientation: 'portrait' } 
+    };
     html2pdf().set(opt).from(element).save().then(() => setIsGenerating(false));
   };
 
+  // ----------------------------------------------------------------------
+  // 2. RENDERIZADO
+  // ----------------------------------------------------------------------
+
   return (
-    <div className="max-w-4xl mx-auto bg-white shadow-lg p-8 rounded-xl print:shadow-none print:p-0">
-      
-      {/* HEADER */}
-      <div className="flex justify-between items-center mb-8 print:hidden">
-        <h2 className="text-2xl font-bold flex items-center gap-2">
-          <Clipboard className="text-blue-600" /> Dictamen Final
-        </h2>
-        <button onClick={handleDownloadPDF} disabled={isGenerating} className={`bg-slate-800 text-white px-4 py-2 rounded-lg flex items-center gap-2 hover:bg-slate-700 ${isGenerating ? 'opacity-50' : ''}`}>
-          <Download size={18} /> {isGenerating ? 'Generando...' : 'Descargar PDF'}
-        </button>
-      </div>
+    <div className="glass-panel rounded-2xl p-6 relative overflow-hidden group">
+        <div className="absolute -inset-0.5 bg-gradient-to-r from-cyan-500/20 to-blue-600/20 rounded-2xl blur opacity-20 pointer-events-none"></div>
 
-      <div className="print:hidden">
-        {/* INFO CLIENTE */}
-        <div className="mb-6 border-b-2 border-slate-800 pb-4">
-            <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
-                <input type="text" placeholder="Cliente..." className="bg-transparent border-b outline-none" value={dictumData.cliente} onChange={(e) => setDictumData({ ...dictumData, cliente: e.target.value })} />
-                <input type="text" placeholder="ETV / Sucursal..." className="bg-transparent border-b outline-none" value={dictumData.etv} onChange={(e) => setDictumData({ ...dictumData, etv: e.target.value })} />
-                <input type="text" placeholder="Serie..." className="bg-transparent border-b outline-none" value={dictumData.serie} onChange={(e) => setDictumData({ ...dictumData, serie: e.target.value })} />
-                <input type="text" placeholder="Dirección..." className="bg-transparent border-b outline-none" value={dictumData.direccion} onChange={(e) => setDictumData({ ...dictumData, direccion: e.target.value })} />
-                <input type="text" placeholder="Técnico..." className="bg-transparent border-b outline-none" value={dictumData.tecnico} onChange={(e) => setDictumData({ ...dictumData, tecnico: e.target.value })} />
+        <div className="relative z-10">
+            
+            {/* HEADER */}
+            <div className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 print:hidden">
+                <h2 className="text-2xl font-bold flex items-center gap-3 text-white">
+                    <div className="p-2 bg-slate-800/50 rounded-lg border border-slate-700">
+                        <Clipboard className="text-cyan-400" size={24} />
+                    </div>
+                    Dictamen Final
+                </h2>
+                <button 
+                    onClick={handleDownloadPDF} 
+                    disabled={isGenerating} 
+                    className={`
+                        relative overflow-hidden rounded-xl px-6 py-3 font-bold text-white shadow-lg transition-all
+                        ${isGenerating ? 'bg-slate-800 opacity-50' : 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:shadow-cyan-500/20 hover:scale-[1.02]'}
+                    `}
+                >
+                    <span className="flex items-center gap-2">
+                        <Download size={18} /> {isGenerating ? 'Generando PDF...' : 'Descargar Reporte'}
+                    </span>
+                </button>
             </div>
-        </div>
 
-        {/* --- INCIDENCIAS (CARRITO) --- */}
-        <div className="mb-6 bg-blue-50 p-5 rounded-lg border border-blue-200 shadow-sm">
-          <div className="flex justify-between items-center mb-4">
-             <h3 className="text-md font-bold text-blue-800 flex items-center gap-2"><FileText size={18} /> Aclaraciones / Faltantes</h3>
-             <label className="cursor-pointer bg-white text-blue-600 px-3 py-1 rounded border border-blue-300 text-xs font-bold hover:bg-blue-50">
-                Importar PDF <input type="file" accept=".pdf" className="hidden" onChange={handleIncidenceUpload} />
-             </label>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-             <div><label className="text-[10px] font-bold text-slate-500 uppercase">Folio</label><input type="text" className="w-full p-2 border rounded bg-white text-sm font-bold" value={manualData.folio} onChange={(e) => setManualData({...manualData, folio: e.target.value})} placeholder="Ej: 19325..." /></div>
-             <div><label className="text-[10px] font-bold text-slate-500 uppercase">Faltante ($)</label><input type="number" className="w-full p-2 border rounded bg-white text-sm font-bold text-red-600" value={manualData.diffAmount} onChange={(e) => setManualData({...manualData, diffAmount: e.target.value})} placeholder="0.00" /></div>
-             <div><label className="text-[10px] font-bold text-slate-500 uppercase">Fecha</label><input type="datetime-local" className="w-full p-2 border rounded bg-white text-sm" value={manualData.date} onChange={(e) => setManualData({...manualData, date: e.target.value})} /></div>
-             <div className="flex items-end"><button onClick={handleAddToList} className="w-full bg-blue-600 text-white p-2 rounded text-sm font-bold hover:bg-blue-700 disabled:opacity-50" disabled={!manualData.folio && !manualData.diffAmount}><Plus size={16} className="inline"/> Agregar</button></div>
-          </div>
-          {validationResult && <div className={`mb-4 p-2 rounded text-xs border ${validationResult.isJustified ? 'bg-green-100 border-green-300' : 'bg-white border-slate-200'} text-center italic`}>{validationResult.conclusionText}</div>}
-          
-          {incidencesList.length > 0 && (
-            <div className="bg-white rounded border border-slate-200 overflow-hidden">
-                <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-100 font-bold text-slate-600 uppercase"><tr><th className="p-2">Folio</th><th className="p-2">Fecha</th><th className="p-2 text-right">Monto</th><th className="p-2 text-center">Estado</th><th className="p-2 text-center">Acción</th></tr></thead>
-                    <tbody>
-                        {incidencesList.map((inc) => (
-                            <tr key={inc.id} className="border-t hover:bg-slate-50">
-                                <td className="p-2 font-mono">{inc.folio}</td>
-                                <td className="p-2">{inc.date ? new Date(inc.date).toLocaleDateString() : 'N/A'}</td>
-                                <td className="p-2 text-right font-bold">${parseFloat(inc.diffAmount).toLocaleString()}</td>
-                                <td className="p-2 text-center">{inc.isJustified ? <span className="text-green-700 font-bold">Justificado</span> : <span className="text-red-700 font-bold">No Procede</span>}</td>
-                                <td className="p-2 text-center"><button onClick={() => handleRemoveFromList(inc.id)} className="text-slate-400 hover:text-red-600"><Trash2 size={14} /></button></td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
-          )}
-        </div>
-
-        {/* --- NUEVA SECCIÓN: MANTENIMIENTO REQUERIDO --- */}
-        <div className="mb-6 bg-slate-50 p-5 rounded-lg border border-slate-200">
-           <h3 className="text-md font-bold text-slate-800 flex items-center gap-2 mb-4">
-              <Wrench size={18} /> Plan de Mantenimiento y Refacciones Sugeridas
-           </h3>
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Checkbox Cambio Rodillos */}
-              <div className={`p-4 rounded border cursor-pointer transition-all ${maintenance.requiresRollers ? 'bg-orange-50 border-orange-300 ring-1 ring-orange-300' : 'bg-white border-slate-300 hover:border-orange-200'}`}
-                   onClick={() => setMaintenance(prev => ({...prev, requiresRollers: !prev.requiresRollers}))}>
-                  <div className="flex items-center gap-3">
-                     <div className={`w-5 h-5 rounded border flex items-center justify-center ${maintenance.requiresRollers ? 'bg-orange-500 border-orange-500 text-white' : 'border-slate-400'}`}>
-                        {maintenance.requiresRollers && <CheckCircle size={14}/>}
-                     </div>
-                     <div>
-                        <p className="font-bold text-sm text-slate-700">Cambio de Kit de Rodillos</p>
-                        <p className="text-xs text-slate-500">Por desgaste de consumibles o errores de alimentación (Jams).</p>
-                     </div>
-                  </div>
-              </div>
-
-              {/* Checkbox Servicios Adicionales */}
-              <div className={`p-4 rounded border cursor-pointer transition-all ${maintenance.requiresServices ? 'bg-blue-50 border-blue-300 ring-1 ring-blue-300' : 'bg-white border-slate-300 hover:border-blue-200'}`}
-                   onClick={() => setMaintenance(prev => ({...prev, requiresServices: !prev.requiresServices}))}>
-                  <div className="flex items-center gap-3">
-                     <div className={`w-5 h-5 rounded border flex items-center justify-center ${maintenance.requiresServices ? 'bg-blue-600 border-blue-600 text-white' : 'border-slate-400'}`}>
-                        {maintenance.requiresServices && <CheckCircle size={14}/>}
-                     </div>
-                     <div className="flex-1">
-                        <p className="font-bold text-sm text-slate-700">Servicios Preventivos Adicionales</p>
-                        <p className="text-xs text-slate-500">Justificado por alta carga de trabajo.</p>
-                     </div>
-                     {/* Input numérico solo si está activo */}
-                     {maintenance.requiresServices && (
-                        <div className="flex items-center gap-1 bg-white p-1 rounded border border-blue-200" onClick={(e) => e.stopPropagation()}>
-                            <span className="text-[10px] font-bold text-slate-500">Cant:</span>
-                            <input 
-                                type="number" 
-                                min="1" max="10"
-                                className="w-10 text-center font-bold text-blue-700 outline-none"
-                                value={maintenance.serviceCount}
-                                onChange={(e) => setMaintenance(prev => ({...prev, serviceCount: e.target.value}))}
-                            />
+            <div className="print:hidden space-y-6">
+                
+                {/* 1. MONITOR DE DICTAMEN */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                    <div className="lg:col-span-2 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden flex flex-col h-full shadow-2xl">
+                        <div className="bg-slate-900 px-4 py-2 border-b border-slate-800 flex items-center gap-2">
+                             <Terminal size={14} className="text-emerald-400"/>
+                             <span className="text-xs font-mono text-slate-400">output_log_analysis.txt (Editable)</span>
                         </div>
-                     )}
-                  </div>
-              </div>
-           </div>
-           
-           <div className="mt-4">
-              <label className="text-[10px] font-bold text-slate-500 uppercase">Justificación Técnica (Aparecerá en reporte)</label>
-              <input 
-                type="text" 
-                className="w-full p-2 border rounded bg-white text-xs text-slate-700"
-                value={maintenance.reason}
-                onChange={(e) => setMaintenance(prev => ({...prev, reason: e.target.value}))}
-              />
-           </div>
-        </div>
+                        <textarea 
+                            className="flex-1 w-full bg-transparent p-4 text-xs md:text-sm font-mono text-emerald-500/90 focus:outline-none resize-none leading-relaxed custom-scrollbar"
+                            value={dictumData.conclusiones}
+                            onChange={(e) => setDictumData({ ...dictumData, conclusiones: e.target.value })}
+                            spellCheck="false"
+                        />
+                    </div>
+                    <div className="space-y-4">
+                        <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 relative overflow-hidden group hover:border-cyan-500/30 transition-all">
+                            <h4 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2"><DollarSign size={14} className="text-cyan-400"/> Balance</h4>
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center text-sm"><span className="text-slate-500">Ingresado</span><span className="text-white font-mono font-bold">${amounts.deposited.toLocaleString()}</span></div>
+                                <div className="flex justify-between items-center text-sm"><span className="text-slate-500">Riesgo</span><span className="text-rose-400 font-mono font-bold">${amounts.unverified.toLocaleString()}</span></div>
+                            </div>
+                        </div>
+                        <div className="bg-slate-900/50 p-4 rounded-xl border border-slate-800 relative overflow-hidden group hover:border-orange-500/30 transition-all">
+                            <h4 className="text-xs font-bold text-slate-400 uppercase mb-2 flex items-center gap-2"><Activity size={14} className="text-orange-400"/> Estatus Técnico</h4>
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center text-sm"><span className="text-slate-500">Errores</span><span className={`font-mono font-bold ${stats.totalErrors > 0 ? 'text-orange-400' : 'text-emerald-400'}`}>{stats.totalErrors} Eventos</span></div>
+                                <div className="flex justify-between items-center text-sm"><span className="text-slate-500">Fiabilidad</span><span className="text-white font-mono font-bold">{successPercentage}%</span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
-        {/* EDITOR CONCLUSIONES */}
-        <div className="mb-8">
-          <h3 className="text-lg font-bold bg-slate-100 p-2 border-l-4 border-blue-600 mb-2">1. Conclusiones y Diagnóstico</h3>
-          <textarea className="w-full h-32 p-3 border border-slate-200 rounded text-justify leading-relaxed focus:border-blue-500 outline-none resize-none text-sm" value={dictumData.conclusiones} onChange={(e) => setDictumData({ ...dictumData, conclusiones: e.target.value })} />
-        </div>
-        
-      </div>
+                <div className="h-px bg-slate-800 w-full"></div>
+                
+                {/* 2. DATOS CLIENTE */}
+                <div className="bg-slate-900/30 p-6 rounded-xl border border-slate-800/50">
+                    <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 tracking-wider flex items-center gap-2"><FileText size={16}/> Datos del Cliente</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {['Cliente', 'ETV', 'Serie', 'Direccion', 'Tecnico'].map((field) => (
+                            <div key={field} className="group/input relative">
+                                <input type="text" placeholder=" " className="peer w-full bg-slate-950/50 border border-slate-700 rounded-lg px-4 pt-4 pb-2 text-slate-200 text-sm focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition-all" value={dictumData[field.toLowerCase()]} onChange={(e) => setDictumData({ ...dictumData, [field.toLowerCase()]: e.target.value })} />
+                                <label className="absolute left-4 top-1 text-[10px] text-slate-500 font-bold uppercase transition-all peer-placeholder-shown:top-3 peer-placeholder-shown:text-sm peer-placeholder-shown:text-slate-600 peer-focus:top-1 peer-focus:text-[10px] peer-focus:text-cyan-500 pointer-events-none">{field}</label>
+                            </div>
+                        ))}
+                    </div>
+                </div>
 
-      {/* REPORTE IMPRIMIBLE */}
-      <PrintableReport
-        dictumData={dictumData}
-        stats={stats}
-        amounts={amounts}
-        successPercentage={successPercentage}
-        topErrorsData={topErrorsData}
-        unverifiedLogs={unverifiedLogs}
-        incidencesList={incidencesList} 
-        maintenance={maintenance} // <--- Pasamos los datos de mantenimiento
-      />
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    
+                    {/* 3. INCIDENCIAS (CAPTURA COMPLETA RESTAURADA) */}
+                    <div className="bg-slate-900/30 p-6 rounded-xl border border-slate-800/50 relative">
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-sm font-bold text-slate-400 uppercase flex items-center gap-2">
+                                <AlertTriangle size={16} className="text-rose-400" /> Aclaraciones
+                            </h3>
+                            <label className="cursor-pointer bg-slate-800 hover:bg-slate-700 text-cyan-400 px-3 py-1 rounded text-[10px] font-bold transition-colors flex items-center gap-1 border border-slate-700">
+                                + PDF <input type="file" accept=".pdf" className="hidden" onChange={handleIncidenceUpload} />
+                            </label>
+                        </div>
+
+                        {/* FORMULARIO EXPANDIDO (Grid 3 columnas + Botón abajo) */}
+                        <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-800 mb-4">
+                            <div className="grid grid-cols-2 gap-3 mb-3">
+                                {/* Folio */}
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-1"><Hash size={10}/> Folio</label>
+                                    <input 
+                                        type="text" 
+                                        className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-300 focus:border-cyan-500 outline-none" 
+                                        value={manualData.folio} 
+                                        onChange={(e) => setManualData({...manualData, folio: e.target.value})} 
+                                        placeholder="Ej: 19321" 
+                                    />
+                                </div>
+                                {/* Monto */}
+                                <div>
+                                    <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-1"><DollarSign size={10}/> Monto Faltante</label>
+                                    <input 
+                                        type="number" 
+                                        className={`w-full bg-slate-900 border rounded p-2 text-xs font-bold outline-none transition-colors
+                                            ${validationResult?.isJustified ? 'border-emerald-500 text-emerald-400' : 'border-slate-700 text-rose-400'}`}
+                                        value={manualData.diffAmount} 
+                                        onChange={(e) => setManualData({...manualData, diffAmount: e.target.value})} 
+                                        placeholder="0.00" 
+                                    />
+                                </div>
+                            </div>
+                            
+                            {/* Fecha (Restaurada) */}
+                            <div className="mb-3">
+                                <label className="text-[10px] font-bold text-slate-500 uppercase flex items-center gap-1 mb-1"><Calendar size={10}/> Fecha del Incidente</label>
+                                <input 
+                                    type="datetime-local" 
+                                    className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-300 [color-scheme:dark] focus:border-cyan-500 outline-none" 
+                                    value={manualData.date} 
+                                    onChange={(e) => setManualData({...manualData, date: e.target.value})} 
+                                />
+                                <p className="text-[10px] text-slate-600 mt-1 italic">Ingresa la fecha para buscar fallas técnicas si el monto no coincide.</p>
+                            </div>
+
+                            <button onClick={handleAddToList} className="w-full bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 rounded p-2 text-xs font-bold hover:bg-cyan-600/30 active:scale-95 transition-all flex items-center justify-center gap-2">
+                                <Plus size={14}/> Agregar Aclaración
+                            </button>
+                        </div>
+
+                        {/* RESULTADO DE VALIDACIÓN (FEEDBACK VISUAL) */}
+                        {validationResult && (
+                            <div className={`mb-4 p-3 rounded text-xs font-mono border flex items-start gap-2 animate-in fade-in slide-in-from-top-1
+                                ${validationResult.isJustified 
+                                    ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-400' 
+                                    : 'bg-rose-950/40 border-rose-500/40 text-rose-400'
+                                }`
+                            }>
+                                <div className="mt-0.5">{validationResult.isJustified ? <CheckCircle size={14}/> : <XCircle size={14}/>}</div>
+                                <div>
+                                    <p className="font-bold">{validationResult.shortConclusion}</p>
+                                    <p className="opacity-70 text-[10px] mt-1 whitespace-pre-line">{validationResult.conclusionText}</p>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* LISTA DE ITEMS */}
+                        <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                            {incidencesList.map((inc) => (
+                                <div key={inc.id} className="flex justify-between items-center bg-slate-950/50 p-2 rounded border border-slate-800">
+                                    <div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-xs text-slate-300 font-mono font-bold">#{inc.folio}</span>
+                                            <span className="text-[10px] text-slate-500">| {inc.date ? new Date(inc.date).toLocaleDateString() : 'Sin Fecha'}</span>
+                                        </div>
+                                        <p className={`text-[10px] font-bold ${inc.isJustified ? 'text-emerald-500' : 'text-rose-500'}`}>{inc.isJustified ? 'JUSTIFICADO' : 'NO PROCEDE'}</p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs font-bold text-slate-200">${parseFloat(inc.diffAmount).toLocaleString()}</span>
+                                        <button onClick={() => handleRemoveFromList(inc.id)} className="text-slate-600 hover:text-rose-500"><Trash2 size={12}/></button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* 4. MANTENIMIENTO */}
+                    <div className="bg-slate-900/30 p-6 rounded-xl border border-slate-800/50">
+                        <h3 className="text-sm font-bold text-slate-400 uppercase mb-4 flex items-center gap-2">
+                            <Wrench size={16} className="text-indigo-400" /> Plan Técnico
+                        </h3>
+                        <div className="space-y-3">
+                            <div onClick={() => setMaintenance(prev => ({...prev, requiresRollers: !prev.requiresRollers}))}
+                                className={`p-3 rounded border cursor-pointer flex items-center gap-3 transition-all ${maintenance.requiresRollers ? 'bg-orange-500/10 border-orange-500/50' : 'bg-slate-950 border-slate-800'}`}>
+                                <div className={`w-4 h-4 rounded flex items-center justify-center ${maintenance.requiresRollers ? 'bg-orange-500 text-white' : 'border border-slate-600'}`}>
+                                    {maintenance.requiresRollers && <CheckCircle size={10}/>}
+                                </div>
+                                <span className="text-xs font-bold text-slate-300">Cambio de Rodillos (Kit)</span>
+                            </div>
+                            
+                            <div onClick={() => setMaintenance(prev => ({...prev, requiresServices: !prev.requiresServices}))}
+                                className={`p-3 rounded border cursor-pointer flex items-center gap-3 transition-all ${maintenance.requiresServices ? 'bg-cyan-500/10 border-cyan-500/50' : 'bg-slate-950 border-slate-800'}`}>
+                                <div className={`w-4 h-4 rounded flex items-center justify-center ${maintenance.requiresServices ? 'bg-cyan-500 text-white' : 'border border-slate-600'}`}>
+                                    {maintenance.requiresServices && <CheckCircle size={10}/>}
+                                </div>
+                                <div className="flex-1 flex justify-between items-center">
+                                    <span className="text-xs font-bold text-slate-300">Servicios Adicionales</span>
+                                    {maintenance.requiresServices && (
+                                        <input type="number" className="w-8 text-center bg-slate-900 border border-cyan-500/50 rounded text-xs text-cyan-400" value={maintenance.serviceCount} onChange={(e) => setMaintenance(prev => ({...prev, serviceCount: e.target.value}))} onClick={(e) => e.stopPropagation()}/>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+
+            {/* REPORTE OCULTO */}
+            <div className="hidden">
+                <div id="printable-report-content">
+                    <PrintableReport
+                        dictumData={dictumData}
+                        stats={stats}
+                        amounts={amounts}
+                        successPercentage={successPercentage}
+                        topErrorsData={topErrorsData}
+                        unverifiedLogs={unverifiedLogs}
+                        incidencesList={incidencesList} 
+                        maintenance={maintenance} 
+                    />
+                </div>
+            </div>
+        </div>
     </div>
   );
 }
